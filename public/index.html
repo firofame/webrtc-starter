@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Registrar</title>
+    <script src="https://cdn.socket.io/4.8.0/socket.io.min.js"></script>
+    <script src="https://webrtc.github.io/samples/src/js/adapter.js"></script>
+    <style>
+        video {
+            width: 45%;
+            margin: 10px;
+            border: 1px solid black;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebRTC Registrar</h1>
+    <video id="localVideo" autoplay playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+    <button id="answerCall" style="display: none;">Answer Call</button>
+    <button id="callButton">Call</button> <!-- Button to initiate a call -->
+
+    <script>
+        const socket = io(); // Connect to the server
+        const pc = new RTCPeerConnection();
+        const localVideo = document.getElementById('localVideo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        let localStream;
+        let isCaller = false; // Track if the local user is the caller
+
+        // Access local camera
+        async function getLocalStream() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideo.srcObject = localStream;
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+            } catch (error) {
+                console.error('Error accessing media devices.', error);
+                alert('Could not access the camera and microphone.');
+            }
+        }
+
+        // Handle incoming offer
+        socket.on('offer', async (offer) => {
+            console.log('Received offer:', offer);
+            if (!isCaller) { // Only accept the offer if not already in a call
+                document.getElementById('answerCall').style.display = 'block'; // Show the answer button
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            }
+        });
+
+        // Handle incoming answer
+        socket.on('answer', (answer) => {
+            console.log('Received answer:', answer);
+            pc.setRemoteDescription(new RTCSessionDescription(answer));
+        });
+
+        // Handle incoming ICE candidates
+        socket.on('ice-candidate', (candidate) => {
+            pc.addIceCandidate(new RTCIceCandidate(candidate));
+        });
+
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                socket.emit('ice-candidate', event.candidate); // Send ICE candidate to the other client
+            }
+        };
+
+        // Setup remote stream handling
+        pc.ontrack = (event) => {
+            remoteVideo.srcObject = event.streams[0]; // Attach remote stream to video element
+        };
+
+        // Answer call button click event
+        document.getElementById('answerCall').onclick = async () => {
+            await getLocalStream(); // Get local stream
+            const answer = await pc.createAnswer(); // Create an answer
+            await pc.setLocalDescription(answer); // Set local description
+            socket.emit('answer', answer); // Send answer back to the caller
+            document.getElementById('answerCall').style.display = 'none'; // Hide the answer button
+        };
+
+        // Create offer function for caller
+        async function createOffer() {
+            await getLocalStream(); // Get local stream
+            isCaller = true; // Set as caller
+            const offer = await pc.createOffer(); // Create an offer
+            await pc.setLocalDescription(offer); // Set local description
+            socket.emit('offer', offer); // Send offer to the other client
+        }
+
+        // Call button to initiate a call
+        document.getElementById('callButton').onclick = createOffer; // Initiate call on button click
+    </script>
+</body>
+</html>
